@@ -3,85 +3,61 @@
 use std::collections::{HashMap, HashSet};
 
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 fn main() {
-    let data = get_vocab("training_set.txt").unwrap();
+    let (list_of_word_info, word_header) = get_vocab("training_set.txt").unwrap();
+    output("preprocessed.txt", word_header, list_of_word_info).unwrap();
 }
 
-fn get_vocab<T: AsRef<Path>>(path: T) -> io::Result<HashMap<String, (f64, usize)>> {
-    let file_data = BufReader::new(File::open(path)?);
-    let mut feature_set: HashMap<String, (f64, usize)> = HashMap::new();
-    for line in file_data.lines().filter_map(|x| x.ok()) {
-        let line: String = line
-            .chars()
-            .filter(|x| x.is_alphanumeric() || x.is_whitespace())
-            .map(|x| x.to_lowercase().to_string())
-            .collect::<String>();
-        let line = line
-            .split_ascii_whitespace()
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<String>>();
+fn output<T: AsRef<Path>>(path: T, words: Vec<String>, data: Vec<Vec<String>>) -> io::Result<()> {
+    let mut outfile = BufWriter::new(File::create(path)?);
 
-        let (good_or_bad, sentence) = line.split_last().unwrap();
-        let good_or_bad = good_or_bad.parse::<f64>().unwrap();
-        let sentence = sentence
-            .iter()
-            .map(std::clone::Clone::clone)
-            .collect::<Vec<_>>();
-
-        for word in sentence {
-            feature_set
-                .entry(word)
-                .and_modify(|x| {
-                    x.0 += good_or_bad;
-                    x.1 += 1
-                })
-                .or_insert((good_or_bad, 1));
-        }
+    outfile.write_all(format!("{}\n", words.join(", ")).as_bytes())?;
+    for values in data {
+        outfile.write_all(format!("{}\n", values.join(", ")).as_bytes())?;
     }
 
-    Ok(feature_set)
+    Ok(())
 }
 
-fn get_features<T: AsRef<Path>>(
-    path: T,
-    trained_set: HashMap<String, (f64, usize)>,
-) -> io::Result<(Vec<String>, Vec<Vec<usize>>)> {
+fn get_vocab<T: AsRef<Path>>(path: T) -> io::Result<(Vec<Vec<String>>, Vec<String>)> {
     let file_data = BufReader::new(File::open(path)?);
-    let lines = file_data.lines().filter_map(std::result::Result::ok);
-    let mut sentences: Vec<Vec<usize>> = vec![];
+    let mut header: HashSet<String> = HashSet::new();
+    let mut lines: Vec<Vec<String>> = vec![];
 
-    let mut keys = trained_set
-        .keys()
-        .map(std::string::ToString::to_string)
-        .collect::<Vec<String>>();
-    keys.sort();
-    keys.push("classlabel".to_string());
-
-    for line in lines {
-        let line: String = line
-            .chars()
-            .filter(|x| x.is_alphanumeric() || x.is_whitespace())
-            .map(|x| x.to_lowercase().to_string())
-            .collect::<String>();
+    for line in file_data.lines().filter_map(Result::ok) {
         let line = line
             .split_ascii_whitespace()
-            .map(std::string::ToString::to_string)
+            .map(|x| x.chars().filter(|y| char::is_alphanumeric(*y)).collect())
+            .map(|x: String| x.to_lowercase())
             .collect::<Vec<String>>();
 
-        let (_, sentence) = line.split_last().unwrap();
-        let sentence = sentence
-            .into_iter()
-            .map(std::clone::Clone::clone)
-            .collect::<HashSet<String>>();
-
-        let mut this_sentence: Vec<usize> = Vec::with_capacity(keys.len());
-        for word in keys.iter() {
-            this_sentence.push(if sentence.contains(word) { 1 } else { 0 });
+        for word in &line {
+            if !header.contains(word) {
+                header.insert(word.to_string());
+            }
         }
 
+        lines.push(line);
     }
 
-    Ok((keys, sentences))
+    let mut words: Vec<String> = header.into_iter().collect::<Vec<String>>();
+    words.sort();
+    words.remove(0);
+
+    let mut parsed: Vec<Vec<String>> = vec![vec![]; lines.len()];
+    for (idx, line) in lines.iter().enumerate() {
+        println!("{:?}", line);
+        let (sentiment, line_words) = line.split_last().unwrap();
+
+        for word in &words {
+            parsed[idx].push((if line_words.contains(&word) { "1" } else { "0" }).to_string());
+        }
+
+        parsed[idx].push(sentiment.to_owned());
+    }
+    words.push("classlabel".to_string());
+
+    Ok((parsed, words))
 }
